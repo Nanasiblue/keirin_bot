@@ -1,0 +1,46 @@
+﻿# Python
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
+
+# Raw / huge data
+data/raw*/
+data/raw_*/
+data/raw_kdreams_days/
+data/raw_kdreams_calendar/
+data/raw_probe/
+data/kdreams_days/
+data/*.db
+*.db
+
+# Huge generated csv
+data/odds_3rentan_all.csv
+data/direct_ticket_dataset.csv
+data/direct_ticket_predictions_full_valid.csv
+data/direct_ticket_predictions_valid.csv
+data/ticket_scores_valid.csv
+data/ticket_scores_valid_with_odds.csv
+data/race_results_full.csv
+data/race_results_full_clean.csv
+data/race_results_full_clean_v2.csv
+data/entries_all_kdreams.csv
+data/payouts_all_kdreams.csv
+data/features_rich.csv
+data/racer_rank_dataset.csv
+data/race_extra_features.csv
+
+# Broad generated data guards
+data/*dataset*.csv
+data/*with_odds*.csv
+data/*extra_features*.csv
+data/*full*.csv
+
+# Oversized / unused model
+models/finish_class_random_forest.joblib
+models/best_model_is_over_50.joblib
+
+# Logs / live outputs
+data/live_logs/
+data/live_predictions/

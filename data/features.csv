@@ -1,0 +1,3 @@
+﻿race_id,date,place,race_no,grade,weather,wind_speed,avg_score,max_score,min_score,std_score,score_gap,avg_age,racer_count,avg_win_rate,max_win_rate,avg_place_rate,max_place_rate,nige_count,oikomi_count,ryo_count,sashi_count,makuri_count,front_runner_pressure,is_rain,is_strong_wind,payout_3rentan,payout_popularity,is_over_100,is_over_300,is_over_500
+202601010101,2026-01-01,立川,1,F1,晴,1.2,88.78,92.1,85.2,2.60134580553989,6.8999999999999915,33.4,5,0.126,0.18,0.376,0.45,1,1,1,1,1,0.2,0,0,8450,4,0,0,0
+202601010102,2026-01-01,立川,2,F1,雨,5.8,86.78333333333335,96.7,81.9,5.6055032482968565,14.799999999999997,38.333333333333336,6,0.11,0.31,0.3116666666666667,0.62,1,2,1,1,1,0.16666666666666666,1,1,382500,218,1,1,0
