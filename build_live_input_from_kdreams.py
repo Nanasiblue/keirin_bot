@@ -26,10 +26,11 @@ OPEN_DIR = Path("data/live_input")
 OUT_DIR = Path("data/live_input")
 
 DIRECT_MODEL = Path("models/direct_ticket_lightgbm.joblib")
+RACE_SCORE_MODEL = Path("models/race_score_lgbm_is_over_50.joblib")
 FINISH_MODELS = {
-    "p_1st": Path("models/finish_lgbm_1st.joblib"),
-    "p_top2": Path("models/finish_lgbm_top2.joblib"),
-    "p_top3": Path("models/finish_lgbm_top3.joblib"),
+    "p_1st": Path("models/finish_live_lgbm_p_1st.joblib"),
+    "p_top2": Path("models/finish_live_lgbm_p_top2.joblib"),
+    "p_top3": Path("models/finish_live_lgbm_p_top3.joblib"),
 }
 
 
@@ -77,11 +78,13 @@ def parse_entries_from_html(path: Path, race_id: str) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values(["race_id", "car_no"])
 
 
-def parse_odds_from_html(path: Path) -> pd.DataFrame:
+def parse_odds_from_html(path: Path, race_id: str) -> pd.DataFrame:
     rows, fail = parse_odds_file(str(path))
     if fail or not rows:
         return pd.DataFrame(columns=["race_id", "combination", "odds", "estimated_payout"])
-    return pd.DataFrame(rows)
+    out = pd.DataFrame(rows)
+    out["race_id"] = str(race_id)
+    return out
 
 
 def add_rank_features(entries: pd.DataFrame) -> pd.DataFrame:
@@ -134,8 +137,6 @@ def race_features(entries: pd.DataFrame, open_races: pd.DataFrame) -> pd.DataFra
             "sashi_count": sashi,
             "makuri_count": makuri,
             "front_runner_pressure": nige / len(g) if len(g) else 0,
-            # 荒れサブ用。正式な荒れAI接続までは簡易スコア。
-            "race_score": 0.5 if len(g) >= 7 else 0.0,
         })
 
     return pd.DataFrame(rows).fillna(0)
@@ -224,13 +225,38 @@ def prepare_for_model(df: pd.DataFrame, features: list[str], categorical: list[s
     return x
 
 
+
+def predict_race_score(races: pd.DataFrame) -> pd.DataFrame:
+    out = races.copy()
+    if not RACE_SCORE_MODEL.exists():
+        print(f"WARNING: race score model not found: {RACE_SCORE_MODEL}")
+        out["race_score"] = 0.0
+        out["race_score_source"] = "missing_model"
+        return out
+
+    bundle = joblib.load(RACE_SCORE_MODEL)
+    model = bundle["model"]
+    features = bundle.get("features") or bundle.get("columns")
+    categorical = bundle.get("categorical", [])
+
+    if not features:
+        raise SystemExit(f"race score model feature list not found: {RACE_SCORE_MODEL}")
+
+    x = prepare_for_model(out, features, categorical)
+    out["race_score"] = model.predict_proba(x)[:, 1]
+    out["race_score_source"] = "race_score_lgbm_is_over_50"
+    return out
 def predict_direct(tickets: pd.DataFrame) -> pd.DataFrame:
     bundle = joblib.load(DIRECT_MODEL)
     model = bundle["model"]
-    features = bundle["features"]
+    features = bundle.get("features") or bundle.get("columns")
+    if not features:
+        raise SystemExit(f"direct model feature list not found: {DIRECT_MODEL}")
     categorical = bundle.get("categorical", [])
 
     x = prepare_for_model(tickets, features, categorical)
+    if x.empty or x.shape[1] == 0:
+        raise SystemExit("direct model input is empty. Check live odds race_id and entries race_id.")
     out = tickets.copy()
     out["direct_ticket_score"] = model.predict_proba(x)[:, 1]
     out["direct_expected_return"] = out["direct_ticket_score"] * out["estimated_payout"]
@@ -242,6 +268,39 @@ def predict_direct(tickets: pd.DataFrame) -> pd.DataFrame:
 def predict_finish(entries: pd.DataFrame) -> pd.DataFrame:
     out = add_rank_features(entries).copy()
 
+    for col in ["score", "age", "win_rate", "place_rate", "car_no"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+
+    style = out["style"].fillna("").astype(str)
+    out["_nige"] = style.str.contains("逃").astype(int)
+    out["_oikomi"] = style.str.contains("追").astype(int)
+    out["_ryo"] = style.str.contains("両").astype(int)
+    out["_sashi"] = style.str.contains("差").astype(int)
+    out["_makuri"] = style.str.contains("捲").astype(int)
+
+    g = out.groupby("race_id")
+
+    out["racer_count"] = g["car_no"].transform("count")
+    out["avg_score"] = g["score"].transform("mean")
+    out["max_score"] = g["score"].transform("max")
+    out["min_score"] = g["score"].transform("min")
+    out["std_score"] = g["score"].transform(lambda s: s.std(ddof=0))
+    out["score_gap"] = out["max_score"] - out["min_score"]
+
+    out["avg_age"] = g["age"].transform("mean")
+    out["avg_win_rate"] = g["win_rate"].transform("mean")
+    out["max_win_rate"] = g["win_rate"].transform("max")
+    out["avg_place_rate"] = g["place_rate"].transform("mean")
+    out["max_place_rate"] = g["place_rate"].transform("max")
+
+    out["nige_count"] = g["_nige"].transform("sum")
+    out["oikomi_count"] = g["_oikomi"].transform("sum")
+    out["ryo_count"] = g["_ryo"].transform("sum")
+    out["sashi_count"] = g["_sashi"].transform("sum")
+    out["makuri_count"] = g["_makuri"].transform("sum")
+    out["front_runner_pressure"] = out["nige_count"] / out["racer_count"].replace(0, 1)
+
     for pred_col, path in FINISH_MODELS.items():
         if not path.exists():
             out[pred_col] = 0.0
@@ -249,19 +308,21 @@ def predict_finish(entries: pd.DataFrame) -> pd.DataFrame:
 
         bundle = joblib.load(path)
         model = bundle["model"]
-        features = bundle["features"]
+        features = bundle.get("features") or bundle.get("columns")
+        categorical = bundle.get("categorical", [])
 
-        x = out.copy()
-        for col in features:
-            if col not in x.columns:
-                x[col] = 0
-        x = x[features].apply(pd.to_numeric, errors="coerce").fillna(0)
+        if not features:
+            raise SystemExit(f"finish model feature list not found: {path}")
+
+        x = prepare_for_model(out, features, categorical)
 
         out[pred_col] = model.predict_proba(x)[:, 1]
-        out[f"rank_{pred_col[2:]}"] = out.groupby("race_id")[pred_col].rank(ascending=False, method="first").astype(int)
+        out[f"rank_{pred_col[2:]}"] = out.groupby("race_id")[pred_col].rank(
+            ascending=False,
+            method="first",
+        ).astype(int)
 
     return out
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -286,7 +347,7 @@ def main():
 
         try:
             entries = parse_entries_from_html(html_path, str(r.race_id))
-            odds = parse_odds_from_html(html_path)
+            odds = parse_odds_from_html(html_path, str(r.race_id))
             entries_parts.append(entries)
             odds_parts.append(odds)
             print(f"[OK] {r.race_id} entries={len(entries)} odds={len(odds)}")
@@ -299,8 +360,20 @@ def main():
     if entries_all.empty or odds_all.empty:
         raise SystemExit("entries or odds is empty")
 
-    races = race_features(entries_all, open_races)
+    races = predict_race_score(race_features(entries_all, open_races))
+    print(f"race_score source: {races['race_score_source'].value_counts().to_dict()}")
+    print(f"race_score range: min={races['race_score'].min():.4f} max={races['race_score'].max():.4f} avg={races['race_score'].mean():.4f}")
+
     tickets = make_ticket_rows(entries_all, odds_all, races)
+    print(f"ticket rows before predict: {len(tickets):,}")
+    if tickets.empty:
+        sample_entries = entries_all["race_id"].drop_duplicates().head(3).tolist()
+        sample_odds = odds_all["race_id"].drop_duplicates().head(3).tolist()
+        raise SystemExit(
+            "ticket rows is empty. odds race_id and entries race_id may not match.\n"
+            f"entries race_id sample: {sample_entries}\n"
+            f"odds race_id sample: {sample_odds}"
+        )
     tickets = predict_direct(tickets)
 
     race_score_map = races.set_index("race_id")["race_score"].to_dict()
@@ -337,3 +410,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+

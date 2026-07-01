@@ -12,7 +12,6 @@ LOG_DIR = Path("data/live_logs")
 
 HIST_TICKETS = Path("data/direct_ticket_predictions_full_valid.csv")
 HIST_FINISH = Path("data/finish_lightgbm_predictions_valid.csv")
-RACE_SCORE_FILE = Path("data/predictions_valid_2026_is_over_50.csv")
 CONTEXT_FILES = [
     Path("data/features_rich.csv"),
     Path("data/features_all_kdreams.csv"),
@@ -43,15 +42,6 @@ def detect_score_col(df: pd.DataFrame) -> str | None:
 def load_race_context() -> pd.DataFrame:
     parts = []
 
-    if RACE_SCORE_FILE.exists():
-        score = read_csv_if_exists(RACE_SCORE_FILE)
-        score_col = detect_score_col(score)
-        if score_col:
-            score = score[["race_id", score_col]].rename(columns={score_col: "race_score"})
-            parts.append(score)
-            print(f"race_score loaded: {RACE_SCORE_FILE} / column={score_col}")
-        else:
-            print(f"WARNING: race_score column not found in {RACE_SCORE_FILE}")
 
     for path in CONTEXT_FILES:
         if not path.exists():
@@ -68,7 +58,7 @@ def load_race_context() -> pd.DataFrame:
     out = parts[0].drop_duplicates("race_id").copy()
     for p in parts[1:]:
         out = out.merge(p.drop_duplicates("race_id"), on="race_id", how="outer", suffixes=("", "_ctx"))
-        for col in ["place", "race_no", "grade", "weather", "wind_speed", "race_score"]:
+        for col in ["place", "race_no", "grade", "weather", "wind_speed"]:
             alt = f"{col}_ctx"
             if alt in out.columns:
                 if col not in out.columns:
@@ -124,7 +114,7 @@ def enrich_candidates(df: pd.DataFrame) -> pd.DataFrame:
     before = len(df)
     df = df.merge(ctx, on="race_id", how="left", suffixes=("", "_ctx"))
 
-    for col in ["place", "race_no", "grade", "weather", "wind_speed", "race_score"]:
+    for col in ["place", "race_no", "grade", "weather", "wind_speed"]:
         alt = f"{col}_ctx"
         if alt in df.columns:
             if col not in df.columns:
@@ -193,7 +183,7 @@ def select_high(df: pd.DataFrame) -> pd.DataFrame:
     base = df[
         (df["odds"] >= 100)
         & (df["odds"] <= 500)
-        & (df["race_score"] >= 0.45)
+        & (df["race_score"] >= 0.35)
         & (df["direct_ticket_score"] >= 0.40)
         & (df["direct_expected_return"] >= 3000)
     ].copy()
@@ -326,3 +316,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
