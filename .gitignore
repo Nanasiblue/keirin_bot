@@ -44,3 +44,8 @@ models/best_model_is_over_50.joblib
 # Logs / live outputs
 data/live_logs/
 data/live_predictions/
+
+data/live_input/
+data/live_raw/
+data/finish_lightgbm_predictions_valid.csv
+data/finish_lightgbm_feature_importance.csv
