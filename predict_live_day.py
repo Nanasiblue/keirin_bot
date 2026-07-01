@@ -239,36 +239,66 @@ def title_for_race(first: pd.Series, race_id: str) -> str:
     return f"{race_id} {race_no}R"
 
 
+def format_rule_name(rule: str) -> str:
+    if rule == MAIN_RULE:
+        return "◎ 本線"
+    if rule == HIGH_RULE:
+        return "🔥 荒れ狙い"
+    return rule
+
+
 def make_summary_text(target_date: str, tickets: pd.DataFrame, finish_map: dict[str, str]) -> str:
     lines = []
-    lines.append(f"競輪AI 予想 {target_date}")
-    lines.append("")
-    lines.append(f"買い目数: {len(tickets)}")
-    lines.append(f"対象レース: {tickets['race_id'].nunique() if not tickets.empty else 0}")
-    lines.append(f"想定購入額: {int(tickets['stake_yen'].sum()) if not tickets.empty else 0}円")
+
+    total_tickets = len(tickets)
+    total_races = tickets["race_id"].nunique() if not tickets.empty else 0
+    total_stake = int(tickets["stake_yen"].sum()) if not tickets.empty else 0
+
+    lines.append(f"🚴 競輪AI 予想 {target_date}")
+    lines.append(f"買い目 {total_tickets}点 / {total_races}R / {total_stake}円")
     lines.append("")
 
     if tickets.empty:
         lines.append("本日の買い目候補はありません。")
         return "\n".join(lines)
 
-    for race_id, g in tickets.sort_values(["race_id", "rule", "direct_ticket_score"], ascending=[True, True, False]).groupby("race_id"):
-        first = g.iloc[0]
-        lines.append(f"【{title_for_race(first, str(race_id))}】")
+    rule_order = {
+        HIGH_RULE: 0,
+        MAIN_RULE: 1,
+    }
 
-        if str(race_id) in finish_map:
-            lines.append(finish_map[str(race_id)])
+    tickets = tickets.copy()
+    tickets["_rule_order"] = tickets["rule"].map(rule_order).fillna(9)
 
-        for r in g.itertuples():
-            lines.append(
-                f"- {r.rule}: {r.combination} / {r.odds:.1f}倍 / "
-                f"score {r.direct_ticket_score:.3f} / race {r.race_score:.3f} / {int(r.stake_yen)}円"
-            )
-        lines.append("")
+    for rule, rg in tickets.sort_values(["_rule_order", "race_id"]).groupby("rule", sort=False):
+        lines.append("━━━━━━━━━━━━")
+        lines.append(format_rule_name(rule))
+
+        for race_id, g in rg.sort_values(["race_id", "direct_ticket_score"], ascending=[True, False]).groupby("race_id"):
+            first = g.iloc[0]
+            race_score = float(first.get("race_score", 0))
+            lines.append(f"【{title_for_race(first, str(race_id))}】 race {race_score:.3f}")
+
+            if str(race_id) in finish_map and finish_map[str(race_id)].strip():
+                lines.append("着順候補")
+                finish_lines = finish_map[str(race_id)].splitlines()
+                for line in finish_lines:
+                    line = line.replace("1着候補: ", "1着: ")
+                    line = line.replace("2着以内: ", "2内: ")
+                    line = line.replace("3着以内: ", "3内: ")
+                    line = line.replace("番 ", "(").replace(", ", ") ")
+                    if "(" in line and not line.endswith(")"):
+                        line += ")"
+                    lines.append(line)
+
+            lines.append("買い目")
+            for r in g.itertuples():
+                lines.append(
+                    f"{r.combination} / {r.odds:.1f}倍 / score {r.direct_ticket_score:.3f} / {int(r.stake_yen)}円"
+                )
+            lines.append("")
 
     return "\n".join(lines)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-date", default="")
@@ -316,6 +346,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
