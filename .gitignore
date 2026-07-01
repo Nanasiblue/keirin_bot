@@ -49,3 +49,11 @@ data/live_input/
 data/live_raw/
 data/finish_lightgbm_predictions_valid.csv
 data/finish_lightgbm_feature_importance.csv
+
+# generated validation outputs
+data/race_score_predictions_valid.csv
+data/finish_live_lightgbm_predictions_valid.csv
+data/live_input/
+data/live_predictions/
+data/live_raw/
+data/live_logs/
