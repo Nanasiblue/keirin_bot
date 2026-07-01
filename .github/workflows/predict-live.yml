@@ -1,0 +1,52 @@
+﻿name: predict-live-keirin
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: "target date JST, example 2026-07-01"
+        required: false
+        default: ""
+      dry_run:
+        description: "paper run only"
+        required: false
+        default: "true"
+
+  schedule:
+    # JST 10:00 / 12:00 / 14:00 / 16:00 / 18:00
+    - cron: "0 1,3,5,7,9 * * *"
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-actions.txt
+
+      - name: Run live prediction
+        env:
+          TARGET_DATE: ${{ github.event.inputs.target_date }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          python run_live_prediction.py --target-date "${TARGET_DATE}" --dry-run "${DRY_RUN}"
+
+      - name: Upload live prediction artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-predictions
+          path: |
+            data/live_predictions/
+            data/live_logs/
+          if-no-files-found: warn
