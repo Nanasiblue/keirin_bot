@@ -302,13 +302,10 @@ def make_summary_text(target_date: str, tickets: pd.DataFrame, finish_map: dict[
 
         lines.append(f"{title} / {deadline_text}{len(g)}点 / {stake}円 / race {race_score:.3f}")
 
-        display_g = g.head(10)
-        for r in display_g.itertuples():
+        for r in g.itertuples():
             lines.append(
                 f"  {r.combination}  {r.odds:.1f}倍  {int(r.stake_yen)}円  [{short_rule_name(r.rule)}]"
             )
-        if len(g) > len(display_g):
-            lines.append(f"  ...ほか{len(g) - len(display_g)}点はCSV参照")
 
         lines.append("")
 
@@ -394,6 +391,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
 
