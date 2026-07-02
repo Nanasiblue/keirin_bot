@@ -26,7 +26,9 @@ OPEN_DIR = Path("data/live_input")
 OUT_DIR = Path("data/live_input")
 
 DIRECT_MODEL = Path("models/direct_ticket_lightgbm.joblib")
+LOCAL_DIRECT_MODEL = Path("models_local/direct_ticket_lightgbm_local.joblib")
 RACE_SCORE_MODEL = Path("models/race_score_lgbm_is_over_50.joblib")
+LOCAL_RACE_SCORE_MODEL = Path("models_local/race_score_random_forest.joblib")
 FINISH_MODELS = {
     "p_1st": Path("models/finish_live_lgbm_p_1st.joblib"),
     "p_top2": Path("models/finish_live_lgbm_p_top2.joblib"),
@@ -229,8 +231,45 @@ def prepare_for_model(df: pd.DataFrame, features: list[str], categorical: list[s
 
 
 
+def prepare_onehot_for_bundle(df: pd.DataFrame, bundle: dict) -> pd.DataFrame:
+    raw_features = bundle.get("raw_features") or []
+    categorical = bundle.get("categorical", [])
+    features = bundle.get("features") or []
+
+    if not raw_features or not features:
+        raise SystemExit("local race score model needs raw_features and features")
+
+    x = df.copy()
+
+    for col in raw_features:
+        if col not in x.columns:
+            x[col] = "unknown" if col in categorical else 0
+
+    x = x[raw_features].copy()
+
+    for col in categorical:
+        if col in x.columns:
+            x[col] = x[col].astype("object").fillna("unknown")
+
+    x = pd.get_dummies(x, columns=[c for c in categorical if c in x.columns], dummy_na=True)
+
+    for col in x.columns:
+        x[col] = pd.to_numeric(x[col], errors="coerce").fillna(0)
+
+    return x.reindex(columns=features, fill_value=0)
+
+
 def predict_race_score(races: pd.DataFrame) -> pd.DataFrame:
     out = races.copy()
+
+    if LOCAL_RACE_SCORE_MODEL.exists():
+        bundle = joblib.load(LOCAL_RACE_SCORE_MODEL)
+        model = bundle["model"]
+        x = prepare_onehot_for_bundle(out, bundle)
+        out["race_score"] = model.predict_proba(x)[:, 1]
+        out["race_score_source"] = "local_random_forest_is_over_50"
+        return out
+
     if not RACE_SCORE_MODEL.exists():
         print(f"WARNING: race score model not found: {RACE_SCORE_MODEL}")
         out["race_score"] = 0.0
@@ -249,8 +288,11 @@ def predict_race_score(races: pd.DataFrame) -> pd.DataFrame:
     out["race_score"] = model.predict_proba(x)[:, 1]
     out["race_score_source"] = "race_score_lgbm_is_over_50"
     return out
+
 def predict_direct(tickets: pd.DataFrame) -> pd.DataFrame:
-    bundle = joblib.load(DIRECT_MODEL)
+    model_path = LOCAL_DIRECT_MODEL if LOCAL_DIRECT_MODEL.exists() else DIRECT_MODEL
+    print(f"direct model: {model_path}")
+    bundle = joblib.load(model_path)
     model = bundle["model"]
     features = bundle.get("features") or bundle.get("columns")
     if not features:
@@ -413,6 +455,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 
 

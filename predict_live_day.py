@@ -38,7 +38,7 @@ HIGH_ODDS_RULE = {
     "min_ticket_score": 0.30,
     "min_race_score": 0.25,
     "min_expected_return": 2000,
-    "max_per_race": 40,
+    "max_per_race": 30,
     "stake_yen": 100,
     "label": "荒れ",
     "reason": "荒れ: 高オッズ + 荒れスコア候補",
@@ -52,8 +52,17 @@ WATCH_ODDS_RULE = {
     "min_expected_return": 0,
     "max_per_race": 40,
     "stake_yen": 0,
-    "label": "大荒れ見るだけ",
-    "reason": "大荒れウォッチ: 200倍以上 + 荒れ気配",
+    "label": "大荒れ候補",
+    "reason": "大荒れ候補: 200倍以上 + 荒れ気配",
+}
+PURCHASE_RULE = {
+    "min_odds": 100,
+    "max_odds": 200,
+    "min_ticket_score": 0.40,
+    "min_race_score": 0.45,
+    "max_per_race": 3,
+    "stake_yen": 100,
+    "label": "購入推奨",
 }
 
 def today_jst() -> str:
@@ -325,6 +334,24 @@ def simplify_finish_line(line: str) -> str:
         line += ")"
     return line
 
+def select_purchase(tickets: pd.DataFrame) -> pd.DataFrame:
+    base = tickets[
+        (tickets["odds"] >= PURCHASE_RULE["min_odds"])
+        & (tickets["odds"] <= PURCHASE_RULE["max_odds"])
+        & (tickets["direct_ticket_score"] >= PURCHASE_RULE["min_ticket_score"])
+        & (tickets["race_score"] >= PURCHASE_RULE["min_race_score"])
+    ].copy()
+
+    if base.empty:
+        return base
+
+    return (
+        base.sort_values(["race_id", "direct_expected_return"], ascending=[True, False])
+        .groupby("race_id", group_keys=False)
+        .head(PURCHASE_RULE["max_per_race"])
+        .copy()
+    )
+
 
 def make_summary_text(target_date: str, tickets: pd.DataFrame, finish_map: dict[str, str]) -> str:
     total_tickets = len(tickets)
@@ -334,6 +361,12 @@ def make_summary_text(target_date: str, tickets: pd.DataFrame, finish_map: dict[
     lines = [
         f"競輪AI {target_date}",
         f"候補一覧: {total_tickets}点 / {total_races}R / 全点表示",
+        (
+            f"購入推奨: {PURCHASE_RULE['min_odds']}-{PURCHASE_RULE['max_odds']}倍"
+            f" score>={PURCHASE_RULE['min_ticket_score']:.2f}"
+            f" race>={PURCHASE_RULE['min_race_score']:.2f}"
+            f" / 各R最大{PURCHASE_RULE['max_per_race']}点"
+        ),
         (
             f"安定: {STABLE_RULE['min_odds']}-{STABLE_RULE['max_odds']}倍"
             f" score>={STABLE_RULE['min_ticket_score']:.2f}"
@@ -346,7 +379,7 @@ def make_summary_text(target_date: str, tickets: pd.DataFrame, finish_map: dict[
             f" / 各R最大{HIGH_ODDS_RULE['max_per_race']}点"
         ),
         (
-            f"大荒れ見るだけ: {WATCH_ODDS_RULE['min_odds']}-{WATCH_ODDS_RULE['max_odds']}倍"
+            f"大荒れ候補: {WATCH_ODDS_RULE['min_odds']}-{WATCH_ODDS_RULE['max_odds']}倍"
             f" score>={WATCH_ODDS_RULE['min_ticket_score']:.2f}"
             f" race>={WATCH_ODDS_RULE['min_race_score']:.2f}"
             f" / 各R最大{WATCH_ODDS_RULE['max_per_race']}点"
@@ -367,6 +400,25 @@ def make_summary_text(target_date: str, tickets: pd.DataFrame, finish_map: dict[
         ascending=[True, True, True, False],
     )
 
+    purchase = select_purchase(tickets)
+    lines.append("【購入推奨】")
+    if purchase.empty:
+        lines.append("該当なし")
+        lines.append("")
+    else:
+        for race_id, g in purchase.groupby("race_id", sort=False):
+            first = g.iloc[0]
+            title = title_for_race(first, str(race_id))
+            deadline = deadline_for_race(first)
+            deadline_text = f"締切 {deadline} / " if deadline else ""
+            stake = int(len(g) * PURCHASE_RULE["stake_yen"])
+            race_score = float(first.get("race_score", 0))
+            lines.append(f"{title} / {deadline_text}{len(g)}点 / {stake}円 / race {race_score:.3f}")
+            for r in g.itertuples():
+                lines.append(
+                    f"  {r.combination}  {r.odds:.1f}倍  score {float(r.direct_ticket_score):.3f}  race {float(r.race_score):.3f}  {PURCHASE_RULE['stake_yen']}円  [購入推奨]"
+                )
+            lines.append("")
     lines.append("【買い目だけ】")
     for race_id, g in tickets.groupby("race_id", sort=False):
         first = g.iloc[0]
@@ -410,7 +462,7 @@ def make_summary_text(target_date: str, tickets: pd.DataFrame, finish_map: dict[
         if high_count:
             label_parts.append(f"荒れ{high_count}点")
         if watch_count:
-            label_parts.append(f"大荒れ見るだけ{watch_count}点")
+            label_parts.append(f"大荒れ候補{watch_count}点")
 
         if label_parts:
             lines.append("種別: " + " / ".join(label_parts))
@@ -472,6 +524,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
 
 
 
