@@ -20,7 +20,41 @@ CONTEXT_FILES = [
 
 MAIN_RULE = "direct_v1_middle_odds"
 HIGH_RULE = "high_odds_v1_top5"
+WATCH_RULE = "huge_odds_watch"
 
+STABLE_RULE = {
+    "min_odds": 10,
+    "max_odds": 100,
+    "min_ticket_score": 0.65,
+    "max_per_race": 40,
+    "stake_yen": 100,
+    "label": "安定",
+    "reason": "安定: 低〜中オッズ + スコア候補",
+}
+
+HIGH_ODDS_RULE = {
+    "min_odds": 80,
+    "max_odds": 800,
+    "min_ticket_score": 0.30,
+    "min_race_score": 0.25,
+    "min_expected_return": 2000,
+    "max_per_race": 40,
+    "stake_yen": 100,
+    "label": "荒れ",
+    "reason": "荒れ: 高オッズ + 荒れスコア候補",
+}
+
+WATCH_ODDS_RULE = {
+    "min_odds": 200,
+    "max_odds": 3000,
+    "min_ticket_score": 0.10,
+    "min_race_score": 0.25,
+    "min_expected_return": 0,
+    "max_per_race": 40,
+    "stake_yen": 0,
+    "label": "大荒れ見るだけ",
+    "reason": "大荒れウォッチ: 200倍以上 + 荒れ気配",
+}
 
 def today_jst() -> str:
     return (dt.datetime.utcnow() + dt.timedelta(hours=9)).strftime("%Y-%m-%d")
@@ -159,9 +193,9 @@ def normalize_tickets(df: pd.DataFrame) -> pd.DataFrame:
 
 def select_main(df: pd.DataFrame) -> pd.DataFrame:
     base = df[
-        (df["odds"] >= 30)
-        & (df["odds"] <= 500)
-        & (df["direct_ticket_score"] >= 0.90)
+        (df["odds"] >= STABLE_RULE["min_odds"])
+        & (df["odds"] <= STABLE_RULE["max_odds"])
+        & (df["direct_ticket_score"] >= STABLE_RULE["min_ticket_score"])
     ].copy()
 
     if base.empty:
@@ -170,22 +204,22 @@ def select_main(df: pd.DataFrame) -> pd.DataFrame:
     selected = (
         base.sort_values(["race_id", "direct_ticket_score"], ascending=[True, False])
         .groupby("race_id", group_keys=False)
-        .head(5)
+        .head(STABLE_RULE["max_per_race"])
         .copy()
     )
     selected["rule"] = MAIN_RULE
-    selected["stake_yen"] = 100
-    selected["reason"] = "本線: 中オッズ + 高スコア"
+    selected["stake_yen"] = STABLE_RULE["stake_yen"]
+    selected["strategy_label"] = STABLE_RULE["label"]
+    selected["reason"] = STABLE_RULE["reason"]
     return selected
-
 
 def select_high(df: pd.DataFrame) -> pd.DataFrame:
     base = df[
-        (df["odds"] >= 100)
-        & (df["odds"] <= 500)
-        & (df["race_score"] >= 0.32)
-        & (df["direct_ticket_score"] >= 0.40)
-        & (df["direct_expected_return"] >= 3000)
+        (df["odds"] >= HIGH_ODDS_RULE["min_odds"])
+        & (df["odds"] <= HIGH_ODDS_RULE["max_odds"])
+        & (df["race_score"] >= HIGH_ODDS_RULE["min_race_score"])
+        & (df["direct_ticket_score"] >= HIGH_ODDS_RULE["min_ticket_score"])
+        & (df["direct_expected_return"] >= HIGH_ODDS_RULE["min_expected_return"])
     ].copy()
 
     if base.empty:
@@ -194,14 +228,39 @@ def select_high(df: pd.DataFrame) -> pd.DataFrame:
     selected = (
         base.sort_values(["race_id", "direct_expected_return"], ascending=[True, False])
         .groupby("race_id", group_keys=False)
-        .head(20)
+        .head(HIGH_ODDS_RULE["max_per_race"])
         .copy()
     )
     selected["rule"] = HIGH_RULE
-    selected["stake_yen"] = 100
-    selected["reason"] = "荒れサブ: 高オッズ + 荒れスコア"
+    selected["stake_yen"] = HIGH_ODDS_RULE["stake_yen"]
+    selected["strategy_label"] = HIGH_ODDS_RULE["label"]
+    selected["reason"] = HIGH_ODDS_RULE["reason"]
     return selected
 
+
+def select_watch(df: pd.DataFrame) -> pd.DataFrame:
+    base = df[
+        (df["odds"] >= WATCH_ODDS_RULE["min_odds"])
+        & (df["odds"] <= WATCH_ODDS_RULE["max_odds"])
+        & (df["race_score"] >= WATCH_ODDS_RULE["min_race_score"])
+        & (df["direct_ticket_score"] >= WATCH_ODDS_RULE["min_ticket_score"])
+        & (df["direct_expected_return"] >= WATCH_ODDS_RULE["min_expected_return"])
+    ].copy()
+
+    if base.empty:
+        return base
+
+    selected = (
+        base.sort_values(["race_id", "direct_expected_return"], ascending=[True, False])
+        .groupby("race_id", group_keys=False)
+        .head(WATCH_ODDS_RULE["max_per_race"])
+        .copy()
+    )
+    selected["rule"] = WATCH_RULE
+    selected["stake_yen"] = WATCH_ODDS_RULE["stake_yen"]
+    selected["strategy_label"] = WATCH_ODDS_RULE["label"]
+    selected["reason"] = WATCH_ODDS_RULE["reason"]
+    return selected
 
 def make_finish_summary(finish: pd.DataFrame) -> dict[str, str]:
     if finish.empty:
@@ -251,12 +310,12 @@ def deadline_for_race(first: pd.Series) -> str:
 
 def short_rule_name(rule: str) -> str:
     if rule == MAIN_RULE:
-        return "本線"
+        return STABLE_RULE["label"]
     if rule == HIGH_RULE:
-        return "荒れ"
+        return HIGH_ODDS_RULE["label"]
+    if rule == WATCH_RULE:
+        return WATCH_ODDS_RULE["label"]
     return str(rule)
-
-
 def simplify_finish_line(line: str) -> str:
     line = line.replace("1着候補: ", "1着 ")
     line = line.replace("2着以内: ", "2内 ")
@@ -274,7 +333,24 @@ def make_summary_text(target_date: str, tickets: pd.DataFrame, finish_map: dict[
 
     lines = [
         f"競輪AI {target_date}",
-        f"候補一覧: {total_tickets}点 / {total_races}R / 表示は各R最大10点",
+        f"候補一覧: {total_tickets}点 / {total_races}R / 全点表示",
+        (
+            f"安定: {STABLE_RULE['min_odds']}-{STABLE_RULE['max_odds']}倍"
+            f" score>={STABLE_RULE['min_ticket_score']:.2f}"
+            f" / 各R最大{STABLE_RULE['max_per_race']}点"
+        ),
+        (
+            f"荒れ: {HIGH_ODDS_RULE['min_odds']}-{HIGH_ODDS_RULE['max_odds']}倍"
+            f" score>={HIGH_ODDS_RULE['min_ticket_score']:.2f}"
+            f" race>={HIGH_ODDS_RULE['min_race_score']:.2f}"
+            f" / 各R最大{HIGH_ODDS_RULE['max_per_race']}点"
+        ),
+        (
+            f"大荒れ見るだけ: {WATCH_ODDS_RULE['min_odds']}-{WATCH_ODDS_RULE['max_odds']}倍"
+            f" score>={WATCH_ODDS_RULE['min_ticket_score']:.2f}"
+            f" race>={WATCH_ODDS_RULE['min_race_score']:.2f}"
+            f" / 各R最大{WATCH_ODDS_RULE['max_per_race']}点"
+        ),
         "",
     ]
 
@@ -282,7 +358,7 @@ def make_summary_text(target_date: str, tickets: pd.DataFrame, finish_map: dict[
         lines.append("今日は買い目候補なし")
         return "\n".join(lines)
 
-    rule_order = {MAIN_RULE: 0, HIGH_RULE: 1}
+    rule_order = {MAIN_RULE: 0, HIGH_RULE: 1, WATCH_RULE: 2}
     tickets = tickets.copy()
     tickets["_rule_order"] = tickets["rule"].map(rule_order).fillna(9)
     tickets["_deadline_sort"] = pd.to_datetime(tickets["deadline_jst"], errors="coerce")
@@ -304,7 +380,7 @@ def make_summary_text(target_date: str, tickets: pd.DataFrame, finish_map: dict[
 
         for r in g.itertuples():
             lines.append(
-                f"  {r.combination}  {r.odds:.1f}倍  {int(r.stake_yen)}円  [{short_rule_name(r.rule)}]"
+                f"  {r.combination}  {r.odds:.1f}倍  score {float(r.direct_ticket_score):.3f}  race {float(r.race_score):.3f}  {int(r.stake_yen)}円  [{short_rule_name(r.rule)}]"
             )
 
         lines.append("")
@@ -326,12 +402,15 @@ def make_summary_text(target_date: str, tickets: pd.DataFrame, finish_map: dict[
 
         main_count = int((g["rule"] == MAIN_RULE).sum())
         high_count = int((g["rule"] == HIGH_RULE).sum())
+        watch_count = int((g["rule"] == WATCH_RULE).sum())
 
         label_parts = []
         if main_count:
-            label_parts.append(f"本線{main_count}点")
+            label_parts.append(f"安定{main_count}点")
         if high_count:
             label_parts.append(f"荒れ{high_count}点")
+        if watch_count:
+            label_parts.append(f"大荒れ見るだけ{watch_count}点")
 
         if label_parts:
             lines.append("種別: " + " / ".join(label_parts))
@@ -364,14 +443,16 @@ def main() -> None:
 
     main_tickets = select_main(candidates)
     high_tickets = select_high(candidates)
+    watch_tickets = select_watch(candidates)
 
-    tickets = pd.concat([main_tickets, high_tickets], ignore_index=True, sort=False)
+    tickets = pd.concat([main_tickets, high_tickets, watch_tickets], ignore_index=True, sort=False)
     if not tickets.empty:
         tickets = tickets.sort_values(["race_id", "rule", "direct_ticket_score"], ascending=[True, True, False])
         tickets = tickets.drop_duplicates(["race_id", "combination", "rule"], keep="first")
 
     print(f"main tickets: {len(main_tickets)}")
     print(f"high tickets: {len(high_tickets)}")
+    print(f"watch tickets: {len(watch_tickets)}")
 
     finish_map = make_finish_summary(finish)
     summary_text = make_summary_text(target_date, tickets, finish_map)
@@ -391,6 +472,12 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
 
 
 
