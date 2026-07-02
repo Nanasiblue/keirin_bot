@@ -47,7 +47,7 @@ def load_race_context() -> pd.DataFrame:
         if not path.exists():
             continue
         ctx = read_csv_if_exists(path)
-        keep = [c for c in ["race_id", "place", "race_no", "grade", "weather", "wind_speed"] if c in ctx.columns]
+        keep = [c for c in ["race_id", "place", "race_no", "deadline_jst", "grade", "weather", "wind_speed"] if c in ctx.columns]
         if "race_id" in keep and len(keep) > 1:
             parts.append(ctx[keep].drop_duplicates("race_id"))
             print(f"context loaded: {path} / columns={keep}")
@@ -58,7 +58,7 @@ def load_race_context() -> pd.DataFrame:
     out = parts[0].drop_duplicates("race_id").copy()
     for p in parts[1:]:
         out = out.merge(p.drop_duplicates("race_id"), on="race_id", how="outer", suffixes=("", "_ctx"))
-        for col in ["place", "race_no", "grade", "weather", "wind_speed"]:
+        for col in ["place", "race_no", "deadline_jst", "grade", "weather", "wind_speed"]:
             alt = f"{col}_ctx"
             if alt in out.columns:
                 if col not in out.columns:
@@ -114,7 +114,7 @@ def enrich_candidates(df: pd.DataFrame) -> pd.DataFrame:
     before = len(df)
     df = df.merge(ctx, on="race_id", how="left", suffixes=("", "_ctx"))
 
-    for col in ["place", "race_no", "grade", "weather", "wind_speed"]:
+    for col in ["place", "race_no", "deadline_jst", "grade", "weather", "wind_speed"]:
         alt = f"{col}_ctx"
         if alt in df.columns:
             if col not in df.columns:
@@ -170,7 +170,7 @@ def select_main(df: pd.DataFrame) -> pd.DataFrame:
     selected = (
         base.sort_values(["race_id", "direct_ticket_score"], ascending=[True, False])
         .groupby("race_id", group_keys=False)
-        .head(2)
+        .head(5)
         .copy()
     )
     selected["rule"] = MAIN_RULE
@@ -183,7 +183,7 @@ def select_high(df: pd.DataFrame) -> pd.DataFrame:
     base = df[
         (df["odds"] >= 100)
         & (df["odds"] <= 500)
-        & (df["race_score"] >= 0.35)
+        & (df["race_score"] >= 0.32)
         & (df["direct_ticket_score"] >= 0.40)
         & (df["direct_expected_return"] >= 3000)
     ].copy()
@@ -194,7 +194,7 @@ def select_high(df: pd.DataFrame) -> pd.DataFrame:
     selected = (
         base.sort_values(["race_id", "direct_expected_return"], ascending=[True, False])
         .groupby("race_id", group_keys=False)
-        .head(5)
+        .head(20)
         .copy()
     )
     selected["rule"] = HIGH_RULE
@@ -239,66 +239,114 @@ def title_for_race(first: pd.Series, race_id: str) -> str:
     return f"{race_id} {race_no}R"
 
 
-def format_rule_name(rule: str) -> str:
+def deadline_for_race(first: pd.Series) -> str:
+    raw = str(first.get("deadline_jst", "")).strip()
+    if not raw or raw.lower() == "nan":
+        return ""
+    dt_value = pd.to_datetime(raw, errors="coerce")
+    if pd.isna(dt_value):
+        return raw
+    return dt_value.strftime("%H:%M")
+
+
+def short_rule_name(rule: str) -> str:
     if rule == MAIN_RULE:
-        return "◎ 本線"
+        return "本線"
     if rule == HIGH_RULE:
-        return "🔥 荒れ狙い"
-    return rule
+        return "荒れ"
+    return str(rule)
+
+
+def simplify_finish_line(line: str) -> str:
+    line = line.replace("1着候補: ", "1着 ")
+    line = line.replace("2着以内: ", "2内 ")
+    line = line.replace("3着以内: ", "3内 ")
+    line = line.replace("番 ", "(").replace(", ", ") ")
+    if "(" in line and not line.endswith(")"):
+        line += ")"
+    return line
 
 
 def make_summary_text(target_date: str, tickets: pd.DataFrame, finish_map: dict[str, str]) -> str:
-    lines = []
-
     total_tickets = len(tickets)
     total_races = tickets["race_id"].nunique() if not tickets.empty else 0
     total_stake = int(tickets["stake_yen"].sum()) if not tickets.empty else 0
 
-    lines.append(f"🚴 競輪AI 予想 {target_date}")
-    lines.append(f"買い目 {total_tickets}点 / {total_races}R / {total_stake}円")
-    lines.append("")
+    lines = [
+        f"競輪AI {target_date}",
+        f"候補一覧: {total_tickets}点 / {total_races}R / 表示は各R最大10点",
+        "",
+    ]
 
     if tickets.empty:
-        lines.append("本日の買い目候補はありません。")
+        lines.append("今日は買い目候補なし")
         return "\n".join(lines)
 
-    rule_order = {
-        HIGH_RULE: 0,
-        MAIN_RULE: 1,
-    }
-
+    rule_order = {MAIN_RULE: 0, HIGH_RULE: 1}
     tickets = tickets.copy()
     tickets["_rule_order"] = tickets["rule"].map(rule_order).fillna(9)
+    tickets["_deadline_sort"] = pd.to_datetime(tickets["deadline_jst"], errors="coerce")
+    tickets = tickets.sort_values(
+        ["_deadline_sort", "race_id", "_rule_order", "direct_ticket_score"],
+        ascending=[True, True, True, False],
+    )
 
-    for rule, rg in tickets.sort_values(["_rule_order", "race_id"]).groupby("rule", sort=False):
-        lines.append("━━━━━━━━━━━━")
-        lines.append(format_rule_name(rule))
+    lines.append("【買い目だけ】")
+    for race_id, g in tickets.groupby("race_id", sort=False):
+        first = g.iloc[0]
+        title = title_for_race(first, str(race_id))
+        deadline = deadline_for_race(first)
+        deadline_text = f"締切 {deadline} / " if deadline else ""
+        stake = int(g["stake_yen"].sum())
+        race_score = float(first.get("race_score", 0))
 
-        for race_id, g in rg.sort_values(["race_id", "direct_ticket_score"], ascending=[True, False]).groupby("race_id"):
-            first = g.iloc[0]
-            race_score = float(first.get("race_score", 0))
-            lines.append(f"【{title_for_race(first, str(race_id))}】 race {race_score:.3f}")
+        lines.append(f"{title} / {deadline_text}{len(g)}点 / {stake}円 / race {race_score:.3f}")
 
-            if str(race_id) in finish_map and finish_map[str(race_id)].strip():
-                lines.append("着順候補")
-                finish_lines = finish_map[str(race_id)].splitlines()
-                for line in finish_lines:
-                    line = line.replace("1着候補: ", "1着: ")
-                    line = line.replace("2着以内: ", "2内: ")
-                    line = line.replace("3着以内: ", "3内: ")
-                    line = line.replace("番 ", "(").replace(", ", ") ")
-                    if "(" in line and not line.endswith(")"):
-                        line += ")"
-                    lines.append(line)
+        display_g = g.head(10)
+        for r in display_g.itertuples():
+            lines.append(
+                f"  {r.combination}  {r.odds:.1f}倍  {int(r.stake_yen)}円  [{short_rule_name(r.rule)}]"
+            )
+        if len(g) > len(display_g):
+            lines.append(f"  ...ほか{len(g) - len(display_g)}点はCSV参照")
 
-            lines.append("買い目")
-            for r in g.itertuples():
-                lines.append(
-                    f"{r.combination} / {r.odds:.1f}倍 / score {r.direct_ticket_score:.3f} / {int(r.stake_yen)}円"
-                )
-            lines.append("")
+        lines.append("")
 
-    return "\n".join(lines)
+    lines.append("【レース詳細】")
+    for race_id, g in tickets.groupby("race_id", sort=False):
+        first = g.iloc[0]
+        title = title_for_race(first, str(race_id))
+        deadline = deadline_for_race(first)
+        deadline_text = f"  締切 {deadline}" if deadline else ""
+        race_score = float(first.get("race_score", 0))
+
+        lines.append("----------------")
+        lines.append(f"{title}{deadline_text}  race {race_score:.3f}")
+
+        if str(race_id) in finish_map and finish_map[str(race_id)].strip():
+            for line in finish_map[str(race_id)].splitlines():
+                lines.append(simplify_finish_line(line))
+
+        main_count = int((g["rule"] == MAIN_RULE).sum())
+        high_count = int((g["rule"] == HIGH_RULE).sum())
+
+        label_parts = []
+        if main_count:
+            label_parts.append(f"本線{main_count}点")
+        if high_count:
+            label_parts.append(f"荒れ{high_count}点")
+
+        if label_parts:
+            lines.append("種別: " + " / ".join(label_parts))
+
+        best = g.sort_values("direct_ticket_score", ascending=False).iloc[0]
+        lines.append(
+            f"最高score: {best.combination} / score {float(best.direct_ticket_score):.3f} / {float(best.odds):.1f}倍"
+        )
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-date", default="")
@@ -346,6 +394,11 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
 
 
 

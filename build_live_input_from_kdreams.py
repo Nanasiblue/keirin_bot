@@ -105,7 +105,9 @@ def race_features(entries: pd.DataFrame, open_races: pd.DataFrame) -> pd.DataFra
         win = pd.to_numeric(g["win_rate"], errors="coerce")
         place_rate = pd.to_numeric(g["place_rate"], errors="coerce")
         style = g["style"].fillna("").astype(str)
-        place, race_no = parse_place_race_no(meta.get(str(race_id), {}).get("label", ""))
+        race_meta = meta.get(str(race_id), {})
+        place, race_no = parse_place_race_no(race_meta.get("label", ""))
+        deadline_jst = race_meta.get("deadline_jst", "")
 
         nige = int(style.str.contains("逃").sum())
         oikomi = int(style.str.contains("追").sum())
@@ -117,6 +119,7 @@ def race_features(entries: pd.DataFrame, open_races: pd.DataFrame) -> pd.DataFra
             "race_id": race_id,
             "place": place,
             "race_no": race_no,
+            "deadline_jst": deadline_jst,
             "grade": "",
             "weather": "unknown",
             "wind_speed": 0.0,
@@ -410,6 +413,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
